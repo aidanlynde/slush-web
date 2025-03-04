@@ -1,23 +1,49 @@
+// src/pages/pay/[sessionId].tsx
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { FaCheck, FaPaypal } from 'react-icons/fa';
-import { SiCashapp, SiVenmo} from 'react-icons/si';
+import { SiCashapp, SiVenmo } from 'react-icons/si';
 import Layout from '../../components/Layout';
+import { 
+  getPublicSession, 
+  claimParticipant, 
+  selectPaymentPlatform,
+  getPaymentLink,
+  Participant, 
+  Session 
+} from '../../lib/api/sessions';
+import { GetServerSideProps } from 'next';
+import { getSessionData } from '../../lib/server/api';
 
-type Participant = {
-  id: string;
-  temp_identifier: string;
-  amount_owed: number;
-  claimed?: boolean;
+
+export const getServerSideProps: GetServerSideProps = async (context) => {
+    const { sessionId } = context.params as { sessionId: string };
+
+    const sessionData = await getSessionData(sessionId);
+
+    if (!sessionData) {
+        return {
+        props: {
+            initialSession: null,
+            error: "Session not found or error loading data"
+        }
+        };
+    }
+
+    return {
+        props: {
+        initialSession: sessionData,
+        error: null
+        }
+    };
 };
-
-type Session = {
-  session_id: string;
-  total_amount: number;
-  currency: string;
-  participants: Participant[];
+  
+// Then update your component props and initial state
+type PaymentClaimPageProps = {
+    initialSession: Session | null;
+    error: string | null;
 };
-
+  
 export default function PaymentClaimPage() {
   const router = useRouter();
   const { sessionId } = router.query;
@@ -25,20 +51,18 @@ export default function PaymentClaimPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
+  const [claimName, setClaimName] = useState('');
+  const [claiming, setClaiming] = useState(false);
+  const [claimStep, setClaimStep] = useState<'SELECT' | 'CLAIM' | 'PAYMENT'>('SELECT');
+  const [paymentUsername, setPaymentUsername] = useState('');
 
   useEffect(() => {
     if (!sessionId) return;
 
     const fetchSessionData = async () => {
       try {
-        // In production, use your actual API endpoint
-        const response = await fetch(`/api/sessions/${sessionId}`);
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch session data');
-        }
-        
-        const data = await response.json();
+        setLoading(true);
+        const data = await getPublicSession(sessionId as string);
         setSession(data);
       } catch (error) {
         console.error('Error fetching session data:', error);
@@ -53,50 +77,67 @@ export default function PaymentClaimPage() {
 
   const handleParticipantSelect = (participant: Participant) => {
     setSelectedParticipant(participant);
+    if (participant.claimed_name) {
+      setClaimStep('PAYMENT');
+    } else {
+      setClaimStep('CLAIM');
+    }
   };
 
-  const handlePaymentMethodSelect = async (method: string) => {
+  const handleClaimSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedParticipant || !sessionId || !claimName.trim()) return;
+
+    try {
+      setClaiming(true);
+      const updatedParticipant = await claimParticipant(
+        sessionId as string,
+        selectedParticipant.id,
+        claimName
+      );
+      
+      // Update the participant in the session
+      if (session) {
+        const updatedParticipants = session.participants.map(p => 
+          p.id === updatedParticipant.id ? updatedParticipant : p
+        );
+        setSession({...session, participants: updatedParticipants});
+      }
+      
+      setSelectedParticipant(updatedParticipant);
+      setClaimStep('PAYMENT');
+    } catch (error) {
+      console.error('Error claiming participant:', error);
+      setError('Failed to claim this portion. It may already be claimed.');
+    } finally {
+      setClaiming(false);
+    }
+  };
+
+  const handlePaymentMethodSelect = async (platform: string) => {
     if (!selectedParticipant || !sessionId) return;
 
-    // Mark as claimed first
     try {
-      const response = await fetch(`/api/sessions/${sessionId}/claim`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ 
-          participantId: selectedParticipant.id 
-        })
-      });
+      // First update the payment platform
+      await selectPaymentPlatform(
+        sessionId as string,
+        selectedParticipant.id,
+        platform,
+        paymentUsername || 'user' // Use a default if not provided
+      );
 
-      if (!response.ok) {
-        throw new Error('Failed to claim payment portion');
-      }
+      // Then get the payment link
+      const { payment_link } = await getPaymentLink(
+        sessionId as string,
+        selectedParticipant.id
+      );
+      
+      // Redirect to the payment platform
+      window.location.href = payment_link;
     } catch (error) {
-      console.error('Error claiming payment portion:', error);
-      return;
+      console.error('Error processing payment:', error);
+      setError('There was a problem setting up payment. Please try again.');
     }
-
-    // Then redirect to payment method
-    const amount = selectedParticipant.amount_owed;
-    const recipient = 'YourSlushUsername'; // Replace with your actual username
-    
-    let paymentUrl = '';
-    switch (method) {
-      case 'venmo':
-        paymentUrl = `venmo://paycharge?txn=pay&recipients=${recipient}&amount=${amount}&note=Payment via Slush`;
-        break;
-      case 'cashapp':
-        paymentUrl = `https://cash.app/$${recipient}/${amount}`;
-        break;
-      case 'paypal':
-        paymentUrl = `https://paypal.me/${recipient}/${amount}`;
-        break;
-    }
-    
-    // Redirect to payment app
-    window.location.href = paymentUrl;
   };
 
   if (loading) {
@@ -149,67 +190,148 @@ export default function PaymentClaimPage() {
           </p>
         </div>
 
-        <div className="mb-8">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Select your portion:</h2>
-          <div className="space-y-3">
-            {session.participants.map((participant) => (
-              <button
-                key={participant.id}
-                onClick={() => !participant.claimed && handleParticipantSelect(participant)}
-                disabled={participant.claimed}
-                className={`w-full p-4 rounded-lg border-2 flex justify-between items-center ${
-                  participant.claimed 
-                    ? 'bg-gray-100 border-gray-200 opacity-75'
-                    : selectedParticipant?.id === participant.id
-                      ? 'bg-blue-50 border-orange-500'
-                      : 'bg-white border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <span className="text-left">
-                  <span className="block font-medium text-gray-900">{participant.temp_identifier}</span>
-                </span>
-                <span className="flex items-center">
-                  <span className="text-lg font-semibold text-gray-900">
-                    ${participant.amount_owed.toFixed(2)}
-                  </span>
-                  {participant.claimed && (
-                    <span className="ml-2 bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full flex items-center">
-                      <FaCheck className="mr-1" />
-                      Paid
+        {claimStep === 'SELECT' && (
+          <div className="mb-8">
+            <h2 className="text-lg font-medium text-gray-900 mb-4">Select your portion:</h2>
+            <div className="space-y-3">
+              {session.participants.map((participant) => {
+                const isClaimed = !!participant.claimed_name;
+                
+                return (
+                  <button
+                    key={participant.id}
+                    onClick={() => !isClaimed && handleParticipantSelect(participant)}
+                    disabled={isClaimed}
+                    className={`w-full p-4 rounded-lg border-2 flex justify-between items-center ${
+                      isClaimed 
+                        ? 'bg-gray-100 border-gray-200 opacity-75'
+                        : selectedParticipant?.id === participant.id
+                          ? 'bg-blue-50 border-orange-500'
+                          : 'bg-white border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <span className="text-left">
+                      <span className="block font-medium text-gray-900">{participant.temp_identifier}</span>
                     </span>
-                  )}
-                </span>
-              </button>
-            ))}
+                    <span className="flex items-center">
+                      <span className="text-lg font-semibold text-gray-900">
+                        ${participant.amount_owed.toFixed(2)}
+                      </span>
+                      {isClaimed && (
+                        <span className="ml-2 bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full flex items-center">
+                          <FaCheck className="mr-1" />
+                          Claimed
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
-        {selectedParticipant && !selectedParticipant.claimed && (
+        {claimStep === 'CLAIM' && selectedParticipant && (
+          <div className="mb-8">
+            <h2 className="text-lg font-medium text-gray-900 mb-4">Claim your portion:</h2>
+            <div className="bg-white p-4 rounded-lg border-2 border-orange-500">
+              <p className="mb-2 text-gray-700">Amount: ${selectedParticipant.amount_owed.toFixed(2)}</p>
+              <form onSubmit={handleClaimSubmit}>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="name">
+                    Your Name
+                  </label>
+                  <input
+                    id="name"
+                    type="text"
+                    value={claimName}
+                    onChange={(e) => setClaimName(e.target.value)}
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    placeholder="Enter your name"
+                    required
+                  />
+                </div>
+                <div className="flex justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setClaimStep('SELECT')}
+                    className="bg-gray-300 hover:bg-gray-400 text-gray-800 py-2 px-4 rounded"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={claiming}
+                    className="bg-orange-500 hover:bg-orange-600 text-white py-2 px-4 rounded flex items-center"
+                  >
+                    {claiming ? (
+                      <>
+                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Processing...
+                      </>
+                    ) : (
+                      'Claim This Portion'
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {claimStep === 'PAYMENT' && selectedParticipant && (
           <div>
-            <h2 className="text-lg font-medium text-gray-900 mb-4">Pay with:</h2>
+            <h2 className="text-lg font-medium text-gray-900 mb-4">How would you like to pay?</h2>
+            
+            <div className="mb-4">
+              <label className="block text-gray-700 text-sm font-bold mb-2">
+                Your Payment Username (optional)
+              </label>
+              <input
+                type="text"
+                value={paymentUsername}
+                onChange={(e) => setPaymentUsername(e.target.value)}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                placeholder="Enter your Venmo/Cash App/PayPal username"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                If provided, this will pre-fill your payment details
+              </p>
+            </div>
+            
             <div className="grid grid-cols-1 gap-3">
               <button
-                onClick={() => handlePaymentMethodSelect('venmo')}
+                onClick={() => handlePaymentMethodSelect('VENMO')}
                 className="flex items-center justify-center p-3 bg-[#3D95CE] text-white rounded-lg"
               >
                 <SiVenmo className="mr-2 text-xl" />
                 Pay with Venmo
               </button>
               <button
-                onClick={() => handlePaymentMethodSelect('cashapp')}
+                onClick={() => handlePaymentMethodSelect('CASHAPP')}
                 className="flex items-center justify-center p-3 bg-[#00D632] text-white rounded-lg"
               >
                 <SiCashapp className="mr-2 text-xl" />
                 Pay with Cash App
               </button>
               <button
-                onClick={() => handlePaymentMethodSelect('paypal')}
+                onClick={() => handlePaymentMethodSelect('PAYPAL')}
                 className="flex items-center justify-center p-3 bg-[#0070E0] text-white rounded-lg"
               >
                 <FaPaypal className="mr-2 text-xl" />
                 Pay with PayPal
               </button>
             </div>
+            
+            <button
+              onClick={() => setClaimStep('SELECT')}
+              className="mt-4 text-gray-600 hover:text-gray-800 text-sm"
+            >
+              ← Back to selection
+            </button>
           </div>
         )}
       </div>
