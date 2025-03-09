@@ -44,20 +44,27 @@ type PaymentClaimPageProps = {
     error: string | null;
 };
   
-export default function PaymentClaimPage() {
+export default function PaymentClaimPage({ initialSession, error: initialError }: PaymentClaimPageProps) {
   const router = useRouter();
   const { sessionId } = router.query;
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [session, setSession] = useState<Session | null>(initialSession);
+  const [loading, setLoading] = useState(!initialSession);
+  const [error, setError] = useState(initialError || '');
   const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
   const [claimName, setClaimName] = useState('');
   const [claiming, setClaiming] = useState(false);
   const [claimStep, setClaimStep] = useState<'SELECT' | 'CLAIM' | 'PAYMENT'>('SELECT');
   const [paymentUsername, setPaymentUsername] = useState('');
 
+  // Get available payment methods with default values if not provided
+  const availablePaymentMethods = session?.available_payment_methods || {
+    venmo: true,
+    cashapp: true,
+    paypal: true
+  };
+
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || initialSession) return;
 
     const fetchSessionData = async () => {
       try {
@@ -73,7 +80,7 @@ export default function PaymentClaimPage() {
     };
 
     fetchSessionData();
-  }, [sessionId]);
+  }, [sessionId, initialSession]);
 
   const handleParticipantSelect = (participant: Participant) => {
     setSelectedParticipant(participant);
@@ -140,6 +147,12 @@ export default function PaymentClaimPage() {
     }
   };
 
+  // Check if any payment methods are available
+  const hasAvailablePaymentMethods = 
+    availablePaymentMethods.venmo || 
+    availablePaymentMethods.cashapp || 
+    availablePaymentMethods.paypal;
+
   if (loading) {
     return (
       <Layout title="Loading Payment | Slush">
@@ -175,6 +188,29 @@ export default function PaymentClaimPage() {
           >
             Go to Homepage
           </button>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (!hasAvailablePaymentMethods) {
+    return (
+      <Layout title="Payment Error | Slush">
+        <div className="min-h-screen flex flex-col items-center justify-center p-4">
+          <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded max-w-md mx-auto">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <p className="text-sm text-red-700">
+                  The creator of this payment session has not enabled any payment methods.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       </Layout>
     );
@@ -303,27 +339,36 @@ export default function PaymentClaimPage() {
             </div>
             
             <div className="grid grid-cols-1 gap-3">
-              <button
-                onClick={() => handlePaymentMethodSelect('VENMO')}
-                className="flex items-center justify-center p-3 bg-[#3D95CE] text-white rounded-lg"
-              >
-                <SiVenmo className="mr-2 text-xl" />
-                Pay with Venmo
-              </button>
-              <button
-                onClick={() => handlePaymentMethodSelect('CASHAPP')}
-                className="flex items-center justify-center p-3 bg-[#00D632] text-white rounded-lg"
-              >
-                <SiCashapp className="mr-2 text-xl" />
-                Pay with Cash App
-              </button>
-              <button
-                onClick={() => handlePaymentMethodSelect('PAYPAL')}
-                className="flex items-center justify-center p-3 bg-[#0070E0] text-white rounded-lg"
-              >
-                <FaPaypal className="mr-2 text-xl" />
-                Pay with PayPal
-              </button>
+              {/* Only show payment methods that are available */}
+              {availablePaymentMethods.venmo && (
+                <button
+                  onClick={() => handlePaymentMethodSelect('VENMO')}
+                  className="flex items-center justify-center p-3 bg-[#3D95CE] text-white rounded-lg"
+                >
+                  <SiVenmo className="mr-2 text-xl" />
+                  Pay with Venmo
+                </button>
+              )}
+              
+              {availablePaymentMethods.cashapp && (
+                <button
+                  onClick={() => handlePaymentMethodSelect('CASHAPP')}
+                  className="flex items-center justify-center p-3 bg-[#00D632] text-white rounded-lg"
+                >
+                  <SiCashapp className="mr-2 text-xl" />
+                  Pay with Cash App
+                </button>
+              )}
+              
+              {availablePaymentMethods.paypal && (
+                <button
+                  onClick={() => handlePaymentMethodSelect('PAYPAL')}
+                  className="flex items-center justify-center p-3 bg-[#0070E0] text-white rounded-lg"
+                >
+                  <FaPaypal className="mr-2 text-xl" />
+                  Pay with PayPal
+                </button>
+              )}
             </div>
             
             <button

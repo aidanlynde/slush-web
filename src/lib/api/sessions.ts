@@ -1,5 +1,11 @@
 import apiClient from './client';
 
+export interface AvailablePaymentMethods {
+  venmo: boolean;
+  cashapp: boolean;
+  paypal: boolean;
+}
+
 export type Participant = {
   id: number;
   temp_identifier: string;
@@ -23,6 +29,7 @@ export type Session = {
   status: string;
   service_fee: number;
   total_with_fee: number;
+  available_payment_methods?: AvailablePaymentMethods;
   participants: Participant[];
 };
 
