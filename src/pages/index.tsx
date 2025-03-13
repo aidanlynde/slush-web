@@ -313,9 +313,9 @@ export default function HomePage() {
                     <a href="#" className="px-5 sm:px-6 py-2.5 sm:py-3 border-2 border-white bg-white text-orange-600 rounded-full font-medium hover:bg-orange-50 transition-colors shadow-lg">
                       Download for iOS
                     </a>
-                    <a href="#" className="px-5 sm:px-6 py-2.5 sm:py-3 border-2 border-white text-white rounded-full font-medium hover:bg-orange-600 transition-colors">
+                    {/* <a href="#" className="px-5 sm:px-6 py-2.5 sm:py-3 border-2 border-white text-white rounded-full font-medium hover:bg-orange-600 transition-colors">
                       Download for Android
-                    </a>
+                    </a> */}
                   </div>
                 </div>
                 
