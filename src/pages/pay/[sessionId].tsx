@@ -62,13 +62,41 @@ export default function PaymentClaimPage({ initialSession, error: initialError }
   };
 
   useEffect(() => {
-    if (!sessionId || initialSession) return;
-
+    if (!sessionId) return;
+  
+    // Skip initial fetch if we already have data from server-side props
+    if (initialSession && !session) {
+      setSession(initialSession);
+      return;
+    }
+  
     const fetchSessionData = async () => {
       try {
         setLoading(true);
         const data = await getPublicSession(sessionId as string);
         setSession(data);
+        
+        // Reset to selection screen if in payment step but selected method is no longer available
+        if (claimStep === 'PAYMENT' && selectedParticipant && selectedParticipant.payment_platform) {
+          const platform = selectedParticipant.payment_platform.toLowerCase();
+          
+          // Check if payment methods exist and if the selected one is available
+          const paymentMethods = data.available_payment_methods || {
+            venmo: false,
+            cashapp: false,
+            paypal: false
+          };
+          
+          const isAvailable = platform === 'venmo' ? paymentMethods.venmo :
+                             platform === 'cashapp' ? paymentMethods.cashapp : 
+                             platform === 'paypal' ? paymentMethods.paypal : false;
+                             
+          if (!isAvailable) {
+            setClaimStep('SELECT');
+            setSelectedParticipant(null);
+            setError('The selected payment method is no longer available');
+          }
+        }
       } catch (error) {
         console.error('Error fetching session data:', error);
         setError('Could not load payment session. Please try again.');
@@ -76,9 +104,17 @@ export default function PaymentClaimPage({ initialSession, error: initialError }
         setLoading(false);
       }
     };
-
+  
+    // Initial fetch
     fetchSessionData();
-  }, [sessionId, initialSession]);
+    
+    // Set up periodic refresh
+    const refreshInterval = setInterval(fetchSessionData, 10000); // Refresh every 10 seconds
+    
+    // Clean up on unmount
+    return () => clearInterval(refreshInterval);
+    
+  }, [sessionId, claimStep, selectedParticipant]);
 
   const handleParticipantSelect = (participant: Participant) => {
     setSelectedParticipant(participant);
